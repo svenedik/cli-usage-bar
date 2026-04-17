@@ -1,7 +1,13 @@
-# cli-usage-bar
+<p align="center">
+  <img src="assets/logo.jpg" alt="cli-usage-bar logo" width="200" />
+</p>
 
-A macOS menu bar app that shows **live Claude Code and Codex CLI session usage**
-by reading local transcript files. No login, no browser cookies, no API keys.
+<h1 align="center">cli-usage-bar</h1>
+
+<p align="center">
+  A macOS menu bar app that shows <b>live Claude Code and Codex CLI session usage</b><br />
+  by reading local transcript files. No login, no browser cookies, no API keys.
+</p>
 
 ```
  Claude 51% (2h30m) 6% (5d) | Codex 31% (1h10m) 45% (6d) ▾
