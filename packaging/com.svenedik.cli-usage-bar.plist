@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.svenedik.cli-usage-bar</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{INSTALL_DIR}}/.venv/bin/python</string>
+        <string>-m</string>
+        <string>cli_usage_bar</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{{INSTALL_DIR}}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/cli-usage-bar.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/cli-usage-bar.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{{HOME}}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+    </dict>
+</dict>
+</plist>

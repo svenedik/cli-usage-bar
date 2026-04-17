@@ -1,0 +1,39 @@
+[project]
+name = "cli-usage-bar"
+version = "0.1.0"
+description = "macOS menubar app showing live Claude Code + Codex CLI session usage from local transcripts"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "svenedik", email = "svenedik@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "rumps>=0.4.0",
+    "watchdog>=4.0.0",
+    "pydantic>=2.6.0",
+]
+
+[project.scripts]
+cli-usage-bar = "cli_usage_bar.app:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
