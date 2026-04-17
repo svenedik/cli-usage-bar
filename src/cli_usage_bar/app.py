@@ -9,6 +9,7 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
+import AppKit
 import rumps
 from PyObjCTools import AppHelper
 
@@ -560,6 +561,12 @@ def main() -> None:
         ensure_default_config()
     cfg = load_config()
     app = UsageBarApp(cfg)
+    # Menu-bar-only: hide from Dock and Cmd-Tab switcher.
+    # NSApp is lazy-initialized by rumps inside run(); force it here so we
+    # can flip the activation policy before the Dock icon is shown.
+    AppKit.NSApplication.sharedApplication().setActivationPolicy_(
+        AppKit.NSApplicationActivationPolicyAccessory
+    )
     app.run()
 
 
