@@ -87,6 +87,8 @@ class ClaudeCodeProvider(Provider):
             secondary=secondary,
             plan_type=None,
             tokens_used=current_block["tokens"] if current_block else 0,
+            budget_tokens=self.budget_tokens,
+            weekly_budget_tokens=self.weekly_budget_tokens,
             cost_usd=current_block["cost"] if current_block else 0.0,
             last_activity=messages[-1]["timestamp"],
         )

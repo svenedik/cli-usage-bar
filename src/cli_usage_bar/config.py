@@ -31,6 +31,14 @@ class ClaudeCodeConfig:
     # empirical Max (5x) ratio — ~72M tokens used / 7d ≈ 6% dashboard — points
     # to ~1.2B weekly vs ~7.5M per 5h block, i.e. a ~150x multiplier.
     weekly_budget_multiplier: float = 150.0
+    title_label: str = "C"
+    title_show_primary: bool = True
+    title_show_secondary: bool = False
+    title_show_reset: bool = False
+    # Threshold alerts. 0 = disabled. Fires once per block when the
+    # percentage first crosses the threshold; re-arms at the next reset.
+    alert_primary_percent: int = 0
+    alert_secondary_percent: int = 0
 
     def budget_tokens(self) -> int:
         if self.plan == "custom" and self.custom_budget_tokens > 0:
@@ -44,6 +52,12 @@ class ClaudeCodeConfig:
 @dataclass
 class CodexCliConfig:
     enabled: bool = True
+    title_label: str = "X"
+    title_show_primary: bool = True
+    title_show_secondary: bool = False
+    title_show_reset: bool = False
+    alert_primary_percent: int = 0
+    alert_secondary_percent: int = 0
 
 
 @dataclass
@@ -73,9 +87,21 @@ enabled = true
 plan = "max5"                    # pro | max5 | max20 | custom
 custom_budget_tokens = 0         # used only when plan = "custom"
 weekly_budget_multiplier = 150.0 # weekly pool size relative to the 5h block
+title_label = "C"                # prefix shown in the menu bar title
+title_show_primary = true        # include the 5h percent in the title
+title_show_secondary = false     # include the weekly percent in the title
+title_show_reset = false         # append remaining time next to each percent
+alert_primary_percent = 0        # notify when 5h % crosses this (0 = off)
+alert_secondary_percent = 0      # notify when weekly % crosses this (0 = off)
 
 [codex_cli]
 enabled = true
+title_label = "X"                # prefix shown in the menu bar title
+title_show_primary = true        # include the 5h percent in the title
+title_show_secondary = false     # include the weekly percent in the title
+title_show_reset = false         # append remaining time next to each percent
+alert_primary_percent = 0        # notify when 5h % crosses this (0 = off)
+alert_secondary_percent = 0      # notify when weekly % crosses this (0 = off)
 """
 
 

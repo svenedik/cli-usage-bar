@@ -47,9 +47,27 @@ if [[ "${NO_LAUNCH_AGENT:-0}" != "1" ]]; then
   fi
 fi
 
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
+ln -sf "$INSTALL_DIR/bin/usage-bar" "$BIN_DIR/usage-bar"
+info "Installed control command: $BIN_DIR/usage-bar"
+if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
+  warn "$BIN_DIR is not in PATH. Add this to your shell rc:"
+  warn '    export PATH="$HOME/.local/bin:$PATH"'
+fi
+
 info "Launching now in the background…"
 (cd "$INSTALL_DIR" && nohup .venv/bin/python -m cli_usage_bar >/tmp/cli-usage-bar.log 2>&1 &)
 
-info "Done. Menu bar should show the 'AI' icon within a few seconds."
-info "Config: $HOME/.config/cli-usage-bar/config.toml"
-info "Logs:   /tmp/cli-usage-bar.log"
+cat <<DONE
+
+Done. Menu bar should show the 'AI' icon within a few seconds.
+
+Control with:
+  usage-bar start | stop | restart | status | logs | config | update | uninstall
+
+Paths:
+  config : $HOME/.config/cli-usage-bar/config.toml
+  logs   : /tmp/cli-usage-bar.log
+  repo   : $INSTALL_DIR
+DONE

@@ -21,6 +21,8 @@ class UsageSnapshot(BaseModel):
     secondary: RateLimit | None = None
     plan_type: str | None = None
     tokens_used: int | None = None
+    budget_tokens: int | None = None           # 5h block budget (if known)
+    weekly_budget_tokens: int | None = None    # 7-day budget (if known)
     cost_usd: float | None = None
     last_activity: datetime | None = None
     error: str | None = None
