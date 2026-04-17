@@ -21,10 +21,13 @@ class UsageSnapshot(BaseModel):
     secondary: RateLimit | None = None
     plan_type: str | None = None
     tokens_used: int | None = None
+    weekly_tokens_used: int | None = None
     budget_tokens: int | None = None           # 5h block budget (if known)
     weekly_budget_tokens: int | None = None    # 7-day budget (if known)
     cost_usd: float | None = None
     last_activity: datetime | None = None
+    source: str | None = None                  # "api" | "local" | "local-fallback"
+    last_api_sync: datetime | None = None      # set on successful API fetches
     error: str | None = None
 
     @property

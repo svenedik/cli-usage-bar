@@ -38,21 +38,19 @@ class ClaudeCodeConfig:
     title_show_primary: bool = True
     title_show_secondary: bool = False
     title_show_reset: bool = False
-    # Native notifications at fixed provider-wide checkpoints (90% and 95%).
-    notifications_enabled: bool = False
-    # Legacy per-window threshold settings kept only for backward-compatible
-    # config parsing. They are no longer used by the app.
-    alert_primary_percent: int = 0
-    alert_secondary_percent: int = 0
+    # Per-window notification thresholds (0 disables that window).
+    alert_primary_percent: int = 90
+    alert_secondary_percent: int = 95
     # Human-readable plan name shown in the menu ("Max (5x)", "Pro", ...).
     # Empty means "derive it from plan". This is useful after Calibrate,
     # which switches ``plan`` to "custom" but does not change the subscription.
     plan_label: str = ""
-    # Usage source. "local" parses ~/.claude/projects JSONL offline.
-    # "api" calls Anthropic's OAuth usage endpoint for dashboard-accurate
-    # percentages and needs the Claude Code OAuth token from the macOS keychain.
-    source: str = "local"
-    api_cache_seconds: int = 60
+    # Usage source. "api" is the default: use dashboard-accurate OAuth usage
+    # when available, and fall back to local JSONL parsing if the endpoint or
+    # auth is unavailable. "local" stays fully offline and never makes network
+    # requests.
+    source: str = "api"
+    api_cache_seconds: int = 600
 
     def plan_display(self) -> str:
         if self.plan_label:
@@ -80,11 +78,9 @@ class CodexCliConfig:
     title_show_primary: bool = True
     title_show_secondary: bool = False
     title_show_reset: bool = False
-    notifications_enabled: bool = False
-    # Legacy per-window threshold settings kept only for backward-compatible
-    # config parsing. They are no longer used by the app.
-    alert_primary_percent: int = 0
-    alert_secondary_percent: int = 0
+    # Per-window notification thresholds (0 disables that window).
+    alert_primary_percent: int = 90
+    alert_secondary_percent: int = 95
 
 
 @dataclass
@@ -100,12 +96,8 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
     with path.open("rb") as f:
         raw = tomllib.load(f)
     general = _load_section(GeneralConfig, raw.get("general"), "general")
-    claude_raw = raw.get("claude_code")
-    codex_raw = raw.get("codex_cli")
-    claude = _load_section(ClaudeCodeConfig, claude_raw, "claude_code")
-    codex = _load_section(CodexCliConfig, codex_raw, "codex_cli")
-    _migrate_legacy_alerts(claude, claude_raw)
-    _migrate_legacy_alerts(codex, codex_raw)
+    claude = _load_section(ClaudeCodeConfig, raw.get("claude_code"), "claude_code")
+    codex = _load_section(CodexCliConfig, raw.get("codex_cli"), "codex_cli")
     return Config(general=general, claude_code=claude, codex_cli=codex)
 
 
@@ -122,10 +114,11 @@ title_label = "C"                # prefix shown in the menu bar title
 title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-notifications_enabled = false    # set true for native notifications at 90% and 95% (max 2)
+alert_primary_percent = 90       # 5h yüzdesi bunu aşınca macOS bildirimi (0 = kapalı)
+alert_secondary_percent = 95     # haftalık yüzdesi bunu aşınca bildirim (0 = kapalı)
 plan_label = ""                  # optional label, e.g. "Max (5x)"; empty = auto
-source = "local"                 # "local" (offline JSONL) | "api" (OAuth usage endpoint)
-api_cache_seconds = 60           # cache for "api" mode (seconds)
+source = "api"                   # default: exact OAuth usage with automatic local fallback
+api_cache_seconds = 600          # cache for "api" mode (seconds)
 
 [codex_cli]
 enabled = true
@@ -133,7 +126,8 @@ title_label = "X"                # prefix shown in the menu bar title
 title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-notifications_enabled = false    # set true for native notifications at 90% and 95% (max 2)
+alert_primary_percent = 90       # 5h yüzdesi bunu aşınca macOS bildirimi (0 = kapalı)
+alert_secondary_percent = 95     # haftalık yüzdesi bunu aşınca bildirim (0 = kapalı)
 """
 
 
@@ -187,18 +181,6 @@ def _load_section[T](section_type: type[T], raw_value: object, section_name: str
         )
     filtered = {key: value for key, value in raw.items() if key in allowed}
     return section_type(**filtered)
-
-
-def _migrate_legacy_alerts(section: ClaudeCodeConfig | CodexCliConfig, raw_value: object) -> None:
-    if not isinstance(raw_value, dict):
-        return
-    if "notifications_enabled" in raw_value:
-        return
-    if int(raw_value.get("alert_primary_percent") or 0) > 0:
-        section.notifications_enabled = True
-        return
-    if int(raw_value.get("alert_secondary_percent") or 0) > 0:
-        section.notifications_enabled = True
 
 
 def _set_toml_value(text: str, section: str, key: str, value: str) -> str:

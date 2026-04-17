@@ -66,6 +66,34 @@ def test_picks_most_recent_file(tmp_path):
     assert snap.plan_type == "pro"
 
 
+def test_preferred_refresh_shortens_when_session_active(tmp_path):
+    sessions = _layout_fixture(tmp_path)
+    # Fixture's latest token_count timestamp is 2026-04-16T19:20:00 UTC.
+    now = datetime(2026, 4, 16, 19, 20, 46, tzinfo=UTC)  # 46s after last event
+    provider = CodexCliProvider(sessions_dir=sessions, now_fn=lambda: now)
+    provider.snapshot()
+
+    assert provider.preferred_refresh_interval(60) == 15
+    assert provider.preferred_refresh_interval(5) == 5  # never slower than default
+
+
+def test_preferred_refresh_uses_default_when_idle(tmp_path):
+    sessions = _layout_fixture(tmp_path)
+    # 10 minutes after last event — well past ACTIVE_SESSION_SECONDS (180).
+    now = datetime(2026, 4, 16, 19, 30, 0, tzinfo=UTC)
+    provider = CodexCliProvider(sessions_dir=sessions, now_fn=lambda: now)
+    provider.snapshot()
+
+    assert provider.preferred_refresh_interval(60) == 60
+
+
+def test_preferred_refresh_default_before_first_snapshot(tmp_path):
+    sessions = _layout_fixture(tmp_path)
+    provider = CodexCliProvider(sessions_dir=sessions)
+    # No snapshot() call yet → _last_event_ts is None → default applies.
+    assert provider.preferred_refresh_interval(60) == 60
+
+
 def test_timestamp_wins_over_mtime(tmp_path):
     """Newer file by mtime should lose if its token_count events are older."""
     sessions = tmp_path / "sessions" / "2026" / "04" / "17"

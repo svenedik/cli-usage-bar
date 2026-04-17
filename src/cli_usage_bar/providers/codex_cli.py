@@ -17,13 +17,22 @@ _DEFAULT_LOOKBACK = timedelta(hours=24)
 class CodexCliProvider(Provider):
     name = "codex_cli"
 
+    # Session is considered "active" (CLI writing events) if the latest
+    # token_count timestamp is newer than this. During active sessions we
+    # poll faster to pick up fresh events the moment the watcher misses.
+    ACTIVE_SESSION_SECONDS = 180
+    ACTIVE_REFRESH_SECONDS = 15
+
     def __init__(
         self,
         sessions_dir: Path = DEFAULT_SESSIONS_DIR,
         lookback: timedelta = _DEFAULT_LOOKBACK,
+        now_fn=lambda: datetime.now(tz=UTC),
     ) -> None:
         self.sessions_dir = sessions_dir
         self.lookback = lookback
+        self._now = now_fn
+        self._last_event_ts: datetime | None = None
 
     def watch_paths(self) -> list[str]:
         return [str(self.sessions_dir)] if self.sessions_dir.exists() else []
@@ -35,7 +44,7 @@ class CodexCliProvider(Provider):
                 error=f"directory not found: {self.sessions_dir}",
             )
 
-        cutoff = datetime.now(tz=UTC) - self.lookback
+        cutoff = self._now() - self.lookback
         candidates = _recent_rollouts(self.sessions_dir, cutoff=cutoff)
         if not candidates:
             return UsageSnapshot(
@@ -50,7 +59,16 @@ class CodexCliProvider(Provider):
                 error="no token_count event in recent rollouts",
             )
 
+        self._last_event_ts = latest_ts
         return _build_snapshot(latest_event, last_activity=latest_ts)
+
+    def preferred_refresh_interval(self, default_interval: int) -> int:
+        if self._last_event_ts is None:
+            return default_interval
+        age = (self._now() - self._last_event_ts).total_seconds()
+        if 0 <= age < self.ACTIVE_SESSION_SECONDS:
+            return min(default_interval, self.ACTIVE_REFRESH_SECONDS)
+        return default_interval
 
 
 def _recent_rollouts(sessions_dir: Path, cutoff: datetime) -> list[Path]:
@@ -125,6 +143,7 @@ def _build_snapshot(payload: dict, last_activity: datetime | None) -> UsageSnaps
         plan_type=rate.get("plan_type"),
         tokens_used=totals.get("total_tokens"),
         last_activity=last_activity,
+        source="local",
     )
 
 

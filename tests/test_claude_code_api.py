@@ -78,21 +78,113 @@ def test_partial_payload_yields_partial_snapshot() -> None:
     assert snap.secondary is None
 
 
-def test_rate_limit_backoff_skips_calls_after_429() -> None:
+def test_retry_waits_15_seconds_after_error() -> None:
+    calls = {"n": 0}
+    clock = {"now": 0.0}
+
+    def fetch():
+        calls["n"] += 1
+        return None
+
+    provider = ClaudeCodeApiProvider(fetch_fn=fetch, cache_seconds=0, clock_fn=lambda: clock["now"])
+    provider.snapshot()
+    first_calls = calls["n"]
+
+    clock["now"] = 5.0
+    provider.snapshot()
+    assert calls["n"] == first_calls
+
+    clock["now"] = 15.0
+    provider.snapshot()
+    assert calls["n"] == first_calls + 1
+
+
+def test_429_triggers_five_minute_backoff() -> None:
+    clock = {"now": 0.0}
     calls = {"n": 0}
 
     def fetch():
         calls["n"] += 1
         return None
 
-    provider = ClaudeCodeApiProvider(fetch_fn=fetch, cache_seconds=0)
+    provider = ClaudeCodeApiProvider(fetch_fn=fetch, cache_seconds=0, clock_fn=lambda: clock["now"])
     provider._last_status = 429
     provider.snapshot()
     first_calls = calls["n"]
-    # Subsequent snapshots within the backoff window must not hit the endpoint.
+    assert first_calls == 1
+
+    clock["now"] = 240.0
+    provider.snapshot()
+    assert calls["n"] == first_calls, "429 cooldown must hold for 5 minutes"
+
+    clock["now"] = 301.0
+    provider.snapshot()
+    assert calls["n"] == first_calls + 1
+
+
+def test_manual_refresh_invalidates_cache() -> None:
+    clock = {"now": 0.0}
+    calls = {"n": 0}
+
+    def fetch():
+        calls["n"] += 1
+        return _fake_payload()
+
+    provider = ClaudeCodeApiProvider(fetch_fn=fetch, cache_seconds=300, clock_fn=lambda: clock["now"])
     provider.snapshot()
     provider.snapshot()
-    assert calls["n"] == first_calls
+    assert calls["n"] == 1, "second snapshot should serve from cache"
+
+    provider.on_manual_refresh()
+    provider.snapshot()
+    assert calls["n"] == 2, "manual refresh must force a fresh fetch"
+
+
+def test_manual_refresh_forces_retry_immediately() -> None:
+    calls = {"n": 0}
+    clock = {"now": 0.0}
+
+    def fetch():
+        calls["n"] += 1
+        return None
+
+    provider = ClaudeCodeApiProvider(fetch_fn=fetch, cache_seconds=0, clock_fn=lambda: clock["now"])
+    provider.snapshot()
+    clock["now"] = 5.0
+    provider.on_manual_refresh()
+    provider.snapshot()
+    assert calls["n"] == 2
+
+
+def test_success_caches_token_and_skips_reauth() -> None:
+    clock = {"now": 0.0}
+    calls = {"token": 0, "fetch": 0}
+
+    def token():
+        calls["token"] += 1
+        return "secret-token"
+
+    provider = ClaudeCodeApiProvider(
+        cache_seconds=0,
+        token_fn=token,
+        auth_status_fn=lambda: (_ for _ in ()).throw(AssertionError("auth status should not run")),
+        clock_fn=lambda: clock["now"],
+    )
+
+    def fake_fetch_live():
+        calls["fetch"] += 1
+        resolved = provider._resolve_token()
+        assert resolved == "secret-token"
+        provider._last_status = 200
+        return _fake_payload()
+
+    provider._fetch_live = fake_fetch_live  # type: ignore[method-assign]
+    provider.snapshot()
+    clock["now"] = 20.0
+    provider.snapshot()
+
+    assert calls["fetch"] == 2
+    assert calls["token"] == 1
 
 
 def test_snapshot_prompts_for_claude_login_when_logged_out() -> None:

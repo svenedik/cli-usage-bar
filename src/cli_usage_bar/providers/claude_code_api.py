@@ -67,11 +67,12 @@ class ClaudeCodeApiProvider(Provider):
     def __init__(
         self,
         plan_display: str | None = None,
-        cache_seconds: int = 60,
+        cache_seconds: int = 600,
         now_fn: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
         fetch_fn: Callable[[], dict[str, Any] | None] | None = None,
         token_fn: Callable[[], str | None] | None = None,
         auth_status_fn: Callable[[], ClaudeAuthStatus | None] | None = None,
+        clock_fn: Callable[[], float] = time.time,
     ) -> None:
         self.plan_display = plan_display
         self.cache_seconds = max(0, cache_seconds)
@@ -79,12 +80,17 @@ class ClaudeCodeApiProvider(Provider):
         self._fetch_fn = fetch_fn
         self._token_fn = token_fn
         self._auth_status_fn = auth_status_fn
+        self._clock = clock_fn
         self._cached: dict[str, Any] | None = None
         self._cached_at: float = 0.0
         # Last HTTP status from _fetch_live (None = no request made, 0 = transport error)
         self._last_status: int | None = None
         self._last_attempt: float = 0.0
         self._last_auth_status: ClaudeAuthStatus | None = None
+        self._cached_token: str | None = None
+        self._retry_fast = False
+        self._next_retry_at: float = 0.0
+        self._last_api_sync: datetime | None = None
 
     def watch_paths(self) -> list[str]:
         # Nothing to watch on disk — the app's refresh timer polls the API.
@@ -97,6 +103,8 @@ class ClaudeCodeApiProvider(Provider):
                 provider=self.name,
                 plan_type=self.plan_display,
                 error=self._error_message(),
+                source="api",
+                last_api_sync=self._last_api_sync,
             )
         try:
             primary = _parse_block(data.get("five_hour"), FIVE_HOUR_MINUTES)
@@ -114,29 +122,37 @@ class ClaudeCodeApiProvider(Provider):
             secondary=secondary,
             plan_type=self.plan_display,
             last_activity=self._now(),
+            source="api",
+            last_api_sync=self._last_api_sync,
         )
 
-    # Negative-cache window after a 429: hammering the endpoint keeps
-    # resetting Anthropic's cooldown, so we stop retrying for RATE_LIMIT_BACKOFF
-    # seconds after seeing a 429 and surface the cached error in the meantime.
+    RETRY_INTERVAL_SECONDS = 15
     RATE_LIMIT_BACKOFF = 300
 
     def _fetch(self) -> dict[str, Any] | None:
-        now = time.time()
+        now = self._clock()
         if self._cached is not None and now - self._cached_at < self.cache_seconds:
             return self._cached
-        if self._last_status == 429 and now - self._last_attempt < self.RATE_LIMIT_BACKOFF:
+        if now < self._next_retry_at:
             return None
         data = (self._fetch_fn or self._fetch_live)()
         self._last_attempt = now
         if data is not None:
             self._cached = data
             self._cached_at = now
+            self._last_api_sync = self._now()
+            self._retry_fast = False
+            self._next_retry_at = now + self.cache_seconds
+        elif self._last_status == 429:
+            self._retry_fast = False
+            self._next_retry_at = now + self.RATE_LIMIT_BACKOFF
+        else:
+            self._retry_fast = True
+            self._next_retry_at = now + self.RETRY_INTERVAL_SECONDS
         return data
 
     def _fetch_live(self) -> dict[str, Any] | None:
-        self._last_auth_status = (self._auth_status_fn or _read_auth_status)()
-        token = (self._token_fn or _read_oauth_token)()
+        token = self._resolve_token()
         if not token:
             self._last_status = None
             return None
@@ -154,6 +170,8 @@ class ClaudeCodeApiProvider(Provider):
                 self._last_status = resp.status
         except urllib.error.HTTPError as exc:
             self._last_status = exc.code
+            if exc.code in (401, 403):
+                self._cached_token = None
             logger.warning("oauth usage HTTP %s", exc.code)
             return None
         except (urllib.error.URLError, TimeoutError) as exc:
@@ -168,6 +186,29 @@ class ClaudeCodeApiProvider(Provider):
         if not isinstance(parsed, dict):
             return None
         return parsed
+
+    def preferred_refresh_interval(self, default_interval: int) -> int:
+        if self._retry_fast:
+            return min(default_interval, self.RETRY_INTERVAL_SECONDS)
+        return default_interval
+
+    def on_manual_refresh(self) -> None:
+        self._cached = None
+        self._cached_at = 0.0
+        self._next_retry_at = 0.0
+
+    def _resolve_token(self) -> str | None:
+        if self._cached_token:
+            return self._cached_token
+
+        token = (self._token_fn or _read_oauth_token)()
+        if token:
+            self._cached_token = token
+            self._last_auth_status = None
+            return token
+
+        self._last_auth_status = (self._auth_status_fn or _read_auth_status)()
+        return None
 
     def _error_message(self) -> str:
         if self._last_status in (401, 403):

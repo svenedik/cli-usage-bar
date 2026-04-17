@@ -24,6 +24,7 @@ from cli_usage_bar.config import (
 from cli_usage_bar.models import UsageSnapshot
 from cli_usage_bar.providers import (
     ClaudeCodeApiProvider,
+    ClaudeCodeAutoProvider,
     ClaudeCodeProvider,
     CodexCliProvider,
     Provider,
@@ -155,12 +156,14 @@ class UsageBarApp(rumps.App):
             five_h = rumps.MenuItem("   5h: …")
             weekly = rumps.MenuItem("   weekly: …")
             extra = rumps.MenuItem("   ")
+            source = rumps.MenuItem("   ")
             self.menu.add(label)
             self.menu.add(five_h)
             self.menu.add(weekly)
             self.menu.add(extra)
+            self.menu.add(source)
             self.menu.add(None)
-            self.status_items[p.name] = [label, five_h, weekly, extra]
+            self.status_items[p.name] = [label, five_h, weekly, extra, source]
 
         self.menu.add(rumps.MenuItem("Refresh now", callback=self._on_refresh_clicked))
         self.menu.add(
@@ -204,6 +207,8 @@ class UsageBarApp(rumps.App):
             self.config = load_config()
         except Exception:
             logger.exception("failed to reload config; keeping previous values")
+        for provider in self.providers:
+            provider.on_manual_refresh()
         self.refresh()
 
     def _refresh_threadsafe(self) -> None:
@@ -387,6 +392,7 @@ class UsageBarApp(rumps.App):
     def refresh(self) -> None:
         now = datetime.now(tz=UTC)
         title_parts: list[str] = []
+        next_interval = self.config.general.refresh_interval_sec
         for p in self.providers:
             try:
                 snap = p.snapshot()
@@ -395,6 +401,7 @@ class UsageBarApp(rumps.App):
                 snap = UsageSnapshot(provider=p.name, error=f"crashed: {exc}")
             self._render_provider(p.name, snap, now=now)
             self._maybe_alert(p.name, snap)
+            next_interval = min(next_interval, p.preferred_refresh_interval(self.config.general.refresh_interval_sec))
 
             if not self.config.general.show_title_percent:
                 continue
@@ -421,16 +428,18 @@ class UsageBarApp(rumps.App):
             self.title = " | ".join(title_parts)
         else:
             self.title = "AI"
+        self.timer.interval = next_interval
 
     def _maybe_alert(self, provider_name: str, snap: UsageSnapshot) -> None:
-        """Fire provider-wide notifications at 90% and 95%, at most twice."""
+        """Fire per-window notifications at configured thresholds (once each)."""
         provider_cfg = (
             self.config.claude_code if provider_name == "claude_code" else self.config.codex_cli
         )
         state, decision = next_provider_alert(
             snap,
             self._alert_state.get(provider_name),
-            enabled=provider_cfg.notifications_enabled,
+            primary_threshold=provider_cfg.alert_primary_percent,
+            secondary_threshold=provider_cfg.alert_secondary_percent,
         )
         self._alert_state[provider_name] = state
         if decision is None:
@@ -441,16 +450,18 @@ class UsageBarApp(rumps.App):
         )
         notify(
             f"{pretty} · {decision.kind}",
-            f"Usage at {decision.used_percent:.0f}% (checkpoint {decision.level}%).",
+            f"Usage at {decision.used_percent:.0f}% (threshold {decision.level}%).",
         )
 
     def _render_provider(self, name: str, snap: UsageSnapshot, now: datetime) -> None:
-        _label, five_h, weekly, extra = self.status_items[name]
+        _label, five_h, weekly, extra, source = self.status_items[name]
         if snap.error:
             five_h.title = f"   {snap.error}"
             weekly.title = "   "
             extra.title = "   "
+            source.title = "   "
             return
+        source.title = "   " + _format_source(snap, now)
 
         if snap.primary:
             pct = snap.primary.used_percent
@@ -485,15 +496,50 @@ class UsageBarApp(rumps.App):
 
 def _make_claude_provider(config: Config) -> Provider:
     if config.claude_code.source == "api":
-        return ClaudeCodeApiProvider(
-            plan_display=config.claude_code.plan_display(),
-            cache_seconds=config.claude_code.api_cache_seconds,
+        return ClaudeCodeAutoProvider(
+            api_provider=ClaudeCodeApiProvider(
+                plan_display=config.claude_code.plan_display(),
+                cache_seconds=config.claude_code.api_cache_seconds,
+            ),
+            local_provider=ClaudeCodeProvider(
+                budget_tokens=config.claude_code.budget_tokens(),
+                weekly_budget_tokens=config.claude_code.weekly_budget_tokens(),
+                plan_display=config.claude_code.plan_display(),
+            ),
         )
     return ClaudeCodeProvider(
         budget_tokens=config.claude_code.budget_tokens(),
         weekly_budget_tokens=config.claude_code.weekly_budget_tokens(),
         plan_display=config.claude_code.plan_display(),
     )
+
+
+def _format_source(snap: UsageSnapshot, now: datetime) -> str:
+    if snap.source == "api":
+        if snap.last_api_sync:
+            return f"source: API · last API update {_format_sync_time(snap.last_api_sync, now)}"
+        return "source: API"
+    if snap.source == "local-fallback":
+        base = "source: local (API offline)"
+        if snap.last_api_sync:
+            base += f" · last API update {_format_sync_time(snap.last_api_sync, now)}"
+        return base
+    if snap.source == "local":
+        base = "source: local"
+        if snap.last_activity:
+            base += f" · last event {_format_sync_time(snap.last_activity, now)}"
+        return base
+    return " "
+
+
+def _format_sync_time(synced_at: datetime, now: datetime) -> str:
+    delta = int((now - synced_at).total_seconds())
+    if delta < 0:
+        delta = 0
+    if delta < 60:
+        return f"{delta}s ago"
+    local = synced_at.astimezone()
+    return local.strftime("%H:%M")
 
 
 def _fmt_tokens(n: int) -> str:

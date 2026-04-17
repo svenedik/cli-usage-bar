@@ -48,6 +48,8 @@ class ClaudeCodeProvider(Provider):
         self.weekly_budget_tokens = (
             weekly_budget_tokens if weekly_budget_tokens is not None else budget_tokens * 150
         )
+        self._budget_override_tokens: int | None = None
+        self._weekly_budget_override_tokens: int | None = None
         self.plan_display = plan_display
         self._now = now_fn
         self.lookback_hours = lookback_hours
@@ -74,11 +76,13 @@ class ClaudeCodeProvider(Provider):
         current_block = _current_block(messages, now=now)
         weekly_messages = [m for m in messages if m["timestamp"] >= now - WEEK_DURATION]
         weekly_tokens = sum(m["tokens"] for m in weekly_messages)
+        budget_tokens = self.current_budget_tokens()
+        weekly_budget_tokens = self.current_weekly_budget_tokens()
 
-        primary = _block_to_rate_limit(current_block, now=now, budget=self.budget_tokens)
+        primary = _block_to_rate_limit(current_block, now=now, budget=budget_tokens)
         secondary = _weekly_rate_limit(
             weekly_tokens=weekly_tokens,
-            budget=self.weekly_budget_tokens,
+            budget=weekly_budget_tokens,
             now=now,
         )
 
@@ -88,11 +92,36 @@ class ClaudeCodeProvider(Provider):
             secondary=secondary,
             plan_type=self.plan_display,
             tokens_used=current_block["tokens"] if current_block else 0,
-            budget_tokens=self.budget_tokens,
-            weekly_budget_tokens=self.weekly_budget_tokens,
+            weekly_tokens_used=weekly_tokens,
+            budget_tokens=budget_tokens,
+            weekly_budget_tokens=weekly_budget_tokens,
             cost_usd=current_block["cost"] if current_block else 0.0,
             last_activity=messages[-1]["timestamp"],
+            source="local",
         )
+
+    def current_budget_tokens(self) -> int:
+        return self._budget_override_tokens or self.budget_tokens
+
+    def current_weekly_budget_tokens(self) -> int:
+        return self._weekly_budget_override_tokens or self.weekly_budget_tokens
+
+    def set_budget_overrides(
+        self,
+        *,
+        primary_budget_tokens: int | None = None,
+        weekly_budget_tokens: int | None = None,
+    ) -> bool:
+        changed = False
+        if primary_budget_tokens and primary_budget_tokens > 0:
+            if self._budget_override_tokens != primary_budget_tokens:
+                self._budget_override_tokens = primary_budget_tokens
+                changed = True
+        if weekly_budget_tokens and weekly_budget_tokens > 0:
+            if self._weekly_budget_override_tokens != weekly_budget_tokens:
+                self._weekly_budget_override_tokens = weekly_budget_tokens
+                changed = True
+        return changed
 
 
 def _iter_usage_messages(projects_dir: Path, cutoff: datetime) -> Iterator[dict]:
