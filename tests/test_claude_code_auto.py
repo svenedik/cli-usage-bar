@@ -75,12 +75,15 @@ def test_api_snapshot_wins_when_available() -> None:
 
 
 def test_merge_uses_local_primary_when_api_primary_missing() -> None:
+    sync_dt = datetime(2026, 4, 17, 14, 30, tzinfo=UTC)
     api = _FakeProvider(
         UsageSnapshot(
             provider="claude_code",
             primary=None,
             secondary=_rate_limit(7),
             plan_type="Max (5x)",
+            source="api",
+            last_api_sync=sync_dt,
         )
     )
     local = _FakeProvider(
@@ -98,6 +101,8 @@ def test_merge_uses_local_primary_when_api_primary_missing() -> None:
     assert snap.primary.used_percent == 35
     assert snap.secondary is not None and snap.secondary.used_percent == 7
     assert snap.tokens_used == 2_500_000
+    assert snap.source == "mixed"
+    assert snap.last_api_sync == sync_dt
 
 
 def test_local_snapshot_falls_back_when_api_errors() -> None:

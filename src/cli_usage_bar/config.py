@@ -114,8 +114,8 @@ title_label = "C"                # prefix shown in the menu bar title
 title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-alert_primary_percent = 90       # 5h yüzdesi bunu aşınca macOS bildirimi (0 = kapalı)
-alert_secondary_percent = 95     # haftalık yüzdesi bunu aşınca bildirim (0 = kapalı)
+alert_primary_percent = 90       # notify when 5h % crosses this (0 = disabled)
+alert_secondary_percent = 95     # notify when weekly % crosses this (0 = disabled)
 plan_label = ""                  # optional label, e.g. "Max (5x)"; empty = auto
 source = "api"                   # default: exact OAuth usage with automatic local fallback
 api_cache_seconds = 600          # cache for "api" mode (seconds)
@@ -126,8 +126,8 @@ title_label = "X"                # prefix shown in the menu bar title
 title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-alert_primary_percent = 90       # 5h yüzdesi bunu aşınca macOS bildirimi (0 = kapalı)
-alert_secondary_percent = 95     # haftalık yüzdesi bunu aşınca bildirim (0 = kapalı)
+alert_primary_percent = 90       # notify when 5h % crosses this (0 = disabled)
+alert_secondary_percent = 95     # notify when weekly % crosses this (0 = disabled)
 """
 
 

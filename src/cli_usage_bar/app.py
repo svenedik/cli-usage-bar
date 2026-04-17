@@ -380,7 +380,7 @@ class UsageBarApp(rumps.App):
             title="cli-usage-bar",
             message=(
                 f"Version {__version__}\n"
-                "Reads Claude Code + Codex CLI local transcripts.\n"
+                "Claude API-first with local fallback, plus Codex CLI local usage.\n"
                 "https://github.com/svenedik/cli-usage-bar"
             ),
             ok="Close",
@@ -520,6 +520,11 @@ def _format_source(snap: UsageSnapshot, now: datetime) -> str:
         if snap.last_api_sync:
             return f"source: API · last API update {_format_sync_time(snap.last_api_sync, now)}"
         return "source: API"
+    if snap.source == "mixed":
+        base = "source: mixed (API + local)"
+        if snap.last_api_sync:
+            base += f" · last API update {_format_sync_time(snap.last_api_sync, now)}"
+        return base
     if snap.source == "local-fallback":
         base = "source: local (API offline)"
         if snap.last_api_sync:

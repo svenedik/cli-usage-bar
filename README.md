@@ -43,8 +43,9 @@
   crosses per-provider, per-window thresholds (default `90%` / `95%`, each fires
   once and re-arms when usage drops below the threshold; set to `0` to disable).
 - **Source transparency** — each provider's menu shows whether the current data
-  came from the API or local transcripts, and when it was last refreshed
-  (`source: API · last API update 14:48`, `source: local · last event 12s ago`).
+  came from the API, local transcripts, or a mixed snapshot, and when it was
+  last refreshed (`source: API · last API update 14:48`, `source: mixed (API + local)`,
+  `source: local · last event 12s ago`).
 - **Quick links** to the Claude.ai and ChatGPT dashboards.
 - **Launch at login** toggle from the menu (no need to touch `launchctl`).
 - **Copy diagnostic info** button: version, config, provider state and recent
@@ -278,9 +279,10 @@ and `usage-bar restart`. The app will:
 6. Use successful API reads to auto-calibrate the local fallback budget.
 7. Fall back to local transcript-based numbers if the endpoint fails.
 8. Even during fallback, merge any partial API fields (e.g. weekly) over the
-   local view, and keep the source line up to date (`source: local (API
-   offline) · last API update 14:48`). Clicking **Refresh now** invalidates
-   the API cache and forces a fresh fetch immediately.
+   local view, and keep the source line up to date (`source: mixed (API +
+   local)` for partial merges, `source: local (API offline)` when the API path
+   is down). Clicking **Refresh now** invalidates the API cache and forces a
+   fresh fetch immediately.
 
 Requirements:
 

@@ -58,6 +58,18 @@ class ClaudeCodeAutoProvider(Provider):
         """API-preferred snapshot; fall back to local fields when API fields are empty."""
         if not local_snap.ok:
             return api_snap
+        uses_local = any(
+            (
+                api_snap.primary is None and local_snap.primary is not None,
+                api_snap.secondary is None and local_snap.secondary is not None,
+                api_snap.tokens_used is None and local_snap.tokens_used is not None,
+                api_snap.weekly_tokens_used is None and local_snap.weekly_tokens_used is not None,
+                api_snap.budget_tokens is None and local_snap.budget_tokens is not None,
+                api_snap.weekly_budget_tokens is None and local_snap.weekly_budget_tokens is not None,
+                api_snap.cost_usd is None and local_snap.cost_usd is not None,
+                api_snap.last_activity is None and local_snap.last_activity is not None,
+            )
+        )
         api_cost = api_snap.cost_usd
         cost_usd = local_snap.cost_usd if not api_cost else api_cost
         return api_snap.model_copy(update={
@@ -69,6 +81,7 @@ class ClaudeCodeAutoProvider(Provider):
             "weekly_budget_tokens": api_snap.weekly_budget_tokens or local_snap.weekly_budget_tokens,
             "cost_usd": cost_usd,
             "last_activity": api_snap.last_activity or local_snap.last_activity,
+            "source": "mixed" if uses_local else api_snap.source,
         })
 
     def _sync_local_calibration(self, local_snap: UsageSnapshot, api_snap: UsageSnapshot) -> bool:

@@ -26,7 +26,7 @@ class UsageSnapshot(BaseModel):
     weekly_budget_tokens: int | None = None    # 7-day budget (if known)
     cost_usd: float | None = None
     last_activity: datetime | None = None
-    source: str | None = None                  # "api" | "local" | "local-fallback"
+    source: str | None = None                  # "api" | "local" | "local-fallback" | "mixed"
     last_api_sync: datetime | None = None      # set on successful API fetches
     error: str | None = None
 
