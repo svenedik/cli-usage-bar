@@ -37,8 +37,8 @@
 - Live **5h** and **weekly** usage for Claude Code + Codex CLI in one place.
 - Configurable menu bar title: pick your own label, show/hide 5h / weekly
   percentages, optionally append remaining time (`"Claude 51% (2h30m)"`).
-- **Threshold alerts** — native macOS notifications when usage crosses a
-  configurable percent (once per block).
+- **Smart alerts** — native macOS notifications at `90%` and `95%`, at most
+  twice per provider until usage drops back below `90%`.
 - **Quick links** to the Claude.ai and ChatGPT dashboards.
 - **Launch at login** toggle from the menu (no need to touch `launchctl`).
 - **Copy diagnostic info** button: version, config, provider state and recent
@@ -46,8 +46,8 @@
 - **Calibrate Claude Code** against the real dashboard percent to correct
   plan-budget estimates.
 - **Two Claude Code modes**: offline (default, JSONL-based) or
-  dashboard-accurate (`source = "api"`, reuses Claude Code's own OAuth token
-  from the macOS keychain — no extra login).
+  dashboard-accurate (`source = "api"`, reuses Claude Code's existing OAuth
+  auth — no token pasting).
 - Codex CLI is always fully offline (rate limits are inline in the rollout).
 
 ## Install (one-liner)
@@ -101,10 +101,11 @@ disk — no network calls, no login, no cookies:
   doesn't publish exact budgets, this can drift a few percent from the
   dashboard (see **Calibrate** below).
 - **Claude Code** (optional `source = "api"`) — reuses the OAuth token that
-  Claude Code already stored in the macOS keychain and calls Anthropic's
-  internal usage endpoint, the same one the dashboard uses. Percentages are
-  byte-identical to `claude.ai → Settings → Usage`, no calibration needed.
-  You never paste a token; you just need to be logged into Claude Code.
+  Claude Code already configured (environment or macOS keychain) and calls
+  Anthropic's internal usage endpoint, the same one the dashboard uses.
+  Percentages are byte-identical to `claude.ai → Settings → Usage`, no
+  calibration needed. You never paste a token; API mode just needs a valid
+  Claude Code login.
 - **Codex CLI** — `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. Every
   `token_count` event already contains inline `rate_limits.primary` (5-hour)
   and `rate_limits.secondary` (weekly) percentages — we just render them.
@@ -113,7 +114,8 @@ disk — no network calls, no login, no cookies:
 Benefits:
 
 - Default mode is 100% offline. No cookie extraction, no API key management.
-- Optional API mode uses your existing login — still no manual auth step.
+- Optional API mode uses your existing Claude login — still no manual token
+  management.
 - Works whether you use Claude Code / Codex CLI via Pro, Max, Plus, etc.
 - Trivial data schema — trivial to extend with a new provider.
 
@@ -123,8 +125,9 @@ Benefits:
 No. In the default `source = "local"` mode the app never talks to any server,
 never reads cookies, never asks for a password. In the optional
 `source = "api"` mode it reuses the OAuth token that Claude Code already
-stored in your macOS keychain (under `Claude Code-credentials`) — you don't
-paste anything, you just need to be logged into Claude Code.
+configured (from `CLAUDE_CODE_OAUTH_TOKEN` or Claude Code's own macOS
+keychain entry). You don't paste anything into this app; just make sure
+`claude auth status` shows you're signed in.
 
 **Does it send my data anywhere?**
 In default mode it only reads local files:
@@ -143,9 +146,9 @@ authenticated with your existing Claude Code OAuth token. Nothing else is
 sent; no other endpoint is called.
 
 **Do I need to sign into Claude or ChatGPT in this app?**
-No. You're already signed in inside Claude Code / Codex CLI; that's all it
-needs. This app is just a reader of their on-disk state (and, in API mode,
-their existing OAuth session).
+No extra sign-in happens inside this app. `source = "local"` works with no
+network login at all, and `source = "api"` just reuses the Claude Code auth
+you already set up on that Mac.
 
 **What if I only use one of the two?**
 Set the other provider's `enabled = false` in the config and
@@ -170,8 +173,7 @@ title_label = "C"                # prefix shown in the menu bar title
 title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-alert_primary_percent = 0        # notify when 5-hour usage reaches this percent
-alert_secondary_percent = 0      # notify when weekly usage reaches this percent
+notifications_enabled = false    # set true for native notifications at 90% and 95% (max 2)
 plan_label = ""                  # optional label, e.g. "Max (5x)"; empty = auto
 source = "local"                 # "local" (offline JSONL) | "api" (OAuth usage endpoint)
 api_cache_seconds = 60           # cache for "api" mode (seconds)
@@ -182,24 +184,40 @@ title_label = "X"                # prefix shown in the menu bar title
 title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-alert_primary_percent = 0        # notify when 5-hour usage reaches this percent
-alert_secondary_percent = 0      # notify when weekly usage reaches this percent
+notifications_enabled = false    # set true for native notifications at 90% and 95% (max 2)
 ```
+
+### Claude API mode in config
+
+To switch Claude from offline transcript parsing to dashboard-accurate API mode:
+
+```toml
+[claude_code]
+source = "api"
+api_cache_seconds = 60
+```
+
+This reuses your existing Claude Code login and polls Anthropic's usage
+endpoint on the interval you choose.
 
 ### Alerts
 
-Set `alert_primary_percent = 80` (or any threshold) and when the
-corresponding percent first crosses it, you'll get a native macOS
-notification like:
+Set `notifications_enabled = true` and each provider can notify at two built-in
+checkpoints:
+
+- `90%`
+- `95%`
+
+Example:
 
 ```
 Claude Code · 5h
-Usage at 80% (threshold 80%).
+Usage at 91% (checkpoint 90%).
 ```
 
-The alert fires at most once per block and re-arms when the block resets,
-so you won't get spammed. Weekly thresholds work the same way via
-`alert_secondary_percent`.
+Alerts are provider-wide, so you get at most two notifications total per
+provider while usage stays above `90%`. Once that provider drops back below
+`90%`, the checkpoints arm again.
 
 ### Using only one CLI?
 
@@ -221,16 +239,16 @@ api_cache_seconds = 60
 
 and `usage-bar restart`. The app will:
 
-1. Read your existing Claude Code OAuth token from the macOS keychain
-   (`security find-generic-password -s "Claude Code-credentials"`).
+1. Reuse your existing Claude Code OAuth token from
+   `CLAUDE_CODE_OAUTH_TOKEN` or Claude Code's current macOS keychain entry.
 2. Call Anthropic's usage endpoint every `api_cache_seconds`
    (default 60s, cached between calls to stay well under any rate limit).
 3. Render the returned 5-hour and 7-day `utilization` directly.
 
 Requirements:
 
-- You've signed into Claude Code at least once on this Mac (the token is
-  what `claude` itself uses).
+- `claude auth status` shows you're signed in. If not, run
+  `claude auth login --claudeai` first.
 - Network access to `api.anthropic.com`.
 
 Notes:
@@ -292,12 +310,19 @@ ln -sf "$PWD/bin/usage-bar" ~/.local/bin/usage-bar
   or edit `plan` / `custom_budget_tokens` in the config and `usage-bar restart`.
   For byte-exact values switch to `source = "api"` (see above).
 - **`api: no usage data (missing token or network)`** — you're in
-  `source = "api"` mode but the keychain entry `Claude Code-credentials`
-  isn't present (sign into Claude Code once) or `api.anthropic.com` is
-  unreachable. You can always fall back to `source = "local"`.
-- **`api: auth failed (re-login to Claude Code)`** — the keychain token
-  has expired or been revoked. Sign into Claude Code again (it refreshes
-  the same keychain entry) and the menu will recover on the next refresh.
+  `source = "api"` mode but no OAuth token was available from Claude Code's
+  configured auth or `api.anthropic.com` is unreachable. You can always fall
+  back to `source = "local"`.
+- **`api: Claude login required (run `claude auth login --claudeai`)`** —
+  Claude Code is not currently signed in on this Mac. Complete the login once,
+  then `usage-bar restart`.
+- **`api: OAuth token unreadable (re-login to Claude Code)`** — Claude Code
+  reports a login exists, but the menu app could not read the OAuth token from
+  the current env/keychain setup. Re-run `claude auth login --claudeai`, then
+  restart the app.
+- **`api: auth failed (run `claude auth login --claudeai`)`** — the upstream
+  endpoint rejected the token. Sign into Claude Code again and the menu will
+  recover on the next refresh.
 - **`api: rate limited (try again shortly)`** — upstream `429`. Increase
   `api_cache_seconds` if you see this often.
 

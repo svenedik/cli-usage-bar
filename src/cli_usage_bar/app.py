@@ -13,6 +13,7 @@ import rumps
 from PyObjCTools import AppHelper
 
 from cli_usage_bar import __version__
+from cli_usage_bar.alerts import ProviderAlertState, next_provider_alert
 from cli_usage_bar.config import (
     CONFIG_PATH,
     Config,
@@ -20,7 +21,7 @@ from cli_usage_bar.config import (
     ensure_default_config,
     load_config,
 )
-from cli_usage_bar.models import RateLimit, UsageSnapshot
+from cli_usage_bar.models import UsageSnapshot
 from cli_usage_bar.providers import (
     ClaudeCodeApiProvider,
     ClaudeCodeProvider,
@@ -130,8 +131,7 @@ class UsageBarApp(rumps.App):
         if config.codex_cli.enabled:
             self.providers.append(CodexCliProvider())
 
-        # (provider_name, kind) -> (last_block_resets_at, already_fired)
-        self._alert_state: dict[tuple[str, str], tuple[datetime | None, bool]] = {}
+        self._alert_state: dict[str, ProviderAlertState] = {}
         self._refresh_lock = threading.Lock()
         self._refresh_pending = False
 
@@ -423,36 +423,26 @@ class UsageBarApp(rumps.App):
             self.title = "AI"
 
     def _maybe_alert(self, provider_name: str, snap: UsageSnapshot) -> None:
-        """Fire a macOS notification once per block when usage crosses a threshold."""
+        """Fire provider-wide notifications at 90% and 95%, at most twice."""
         provider_cfg = (
             self.config.claude_code if provider_name == "claude_code" else self.config.codex_cli
         )
-        for kind, rl, threshold in (
-            ("5h", snap.primary, provider_cfg.alert_primary_percent),
-            ("weekly", snap.secondary, provider_cfg.alert_secondary_percent),
-        ):
-            self._maybe_alert_single(provider_name, kind, rl, threshold)
-
-    def _maybe_alert_single(
-        self, provider_name: str, kind: str, rl: RateLimit | None, threshold: int
-    ) -> None:
-        if rl is None or threshold <= 0:
+        state, decision = next_provider_alert(
+            snap,
+            self._alert_state.get(provider_name),
+            enabled=provider_cfg.notifications_enabled,
+        )
+        self._alert_state[provider_name] = state
+        if decision is None:
             return
-        key = (provider_name, kind)
-        last_resets_at, fired = self._alert_state.get(key, (None, False))
-        # New block (resets_at changed) ⇒ re-arm the alert.
-        if last_resets_at != rl.resets_at:
-            fired = False
-        if not fired and rl.used_percent >= threshold:
-            pretty = {"claude_code": "Claude Code", "codex_cli": "Codex CLI"}.get(
-                provider_name, provider_name
-            )
-            notify(
-                f"{pretty} · {kind}",
-                f"Usage at {rl.used_percent:.0f}% (threshold {threshold}%).",
-            )
-            fired = True
-        self._alert_state[key] = (rl.resets_at, fired)
+
+        pretty = {"claude_code": "Claude Code", "codex_cli": "Codex CLI"}.get(
+            provider_name, provider_name
+        )
+        notify(
+            f"{pretty} · {decision.kind}",
+            f"Usage at {decision.used_percent:.0f}% (checkpoint {decision.level}%).",
+        )
 
     def _render_provider(self, name: str, snap: UsageSnapshot, now: datetime) -> None:
         _label, five_h, weekly, extra = self.status_items[name]

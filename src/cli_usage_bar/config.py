@@ -38,8 +38,10 @@ class ClaudeCodeConfig:
     title_show_primary: bool = True
     title_show_secondary: bool = False
     title_show_reset: bool = False
-    # Threshold alerts. 0 = disabled. Fires once per block when the
-    # percentage first crosses the threshold; re-arms at the next reset.
+    # Native notifications at fixed provider-wide checkpoints (90% and 95%).
+    notifications_enabled: bool = False
+    # Legacy per-window threshold settings kept only for backward-compatible
+    # config parsing. They are no longer used by the app.
     alert_primary_percent: int = 0
     alert_secondary_percent: int = 0
     # Human-readable plan name shown in the menu ("Max (5x)", "Pro", ...).
@@ -78,6 +80,9 @@ class CodexCliConfig:
     title_show_primary: bool = True
     title_show_secondary: bool = False
     title_show_reset: bool = False
+    notifications_enabled: bool = False
+    # Legacy per-window threshold settings kept only for backward-compatible
+    # config parsing. They are no longer used by the app.
     alert_primary_percent: int = 0
     alert_secondary_percent: int = 0
 
@@ -95,8 +100,12 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
     with path.open("rb") as f:
         raw = tomllib.load(f)
     general = _load_section(GeneralConfig, raw.get("general"), "general")
-    claude = _load_section(ClaudeCodeConfig, raw.get("claude_code"), "claude_code")
-    codex = _load_section(CodexCliConfig, raw.get("codex_cli"), "codex_cli")
+    claude_raw = raw.get("claude_code")
+    codex_raw = raw.get("codex_cli")
+    claude = _load_section(ClaudeCodeConfig, claude_raw, "claude_code")
+    codex = _load_section(CodexCliConfig, codex_raw, "codex_cli")
+    _migrate_legacy_alerts(claude, claude_raw)
+    _migrate_legacy_alerts(codex, codex_raw)
     return Config(general=general, claude_code=claude, codex_cli=codex)
 
 
@@ -113,8 +122,7 @@ title_label = "C"                # prefix shown in the menu bar title
 title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-alert_primary_percent = 0        # notify when 5-hour usage reaches this percent
-alert_secondary_percent = 0      # notify when weekly usage reaches this percent
+notifications_enabled = false    # set true for native notifications at 90% and 95% (max 2)
 plan_label = ""                  # optional label, e.g. "Max (5x)"; empty = auto
 source = "local"                 # "local" (offline JSONL) | "api" (OAuth usage endpoint)
 api_cache_seconds = 60           # cache for "api" mode (seconds)
@@ -125,8 +133,7 @@ title_label = "X"                # prefix shown in the menu bar title
 title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-alert_primary_percent = 0        # notify when 5-hour usage reaches this percent
-alert_secondary_percent = 0      # notify when weekly usage reaches this percent
+notifications_enabled = false    # set true for native notifications at 90% and 95% (max 2)
 """
 
 
@@ -180,6 +187,18 @@ def _load_section[T](section_type: type[T], raw_value: object, section_name: str
         )
     filtered = {key: value for key, value in raw.items() if key in allowed}
     return section_type(**filtered)
+
+
+def _migrate_legacy_alerts(section: ClaudeCodeConfig | CodexCliConfig, raw_value: object) -> None:
+    if not isinstance(raw_value, dict):
+        return
+    if "notifications_enabled" in raw_value:
+        return
+    if int(raw_value.get("alert_primary_percent") or 0) > 0:
+        section.notifications_enabled = True
+        return
+    if int(raw_value.get("alert_secondary_percent") or 0) > 0:
+        section.notifications_enabled = True
 
 
 def _set_toml_value(text: str, section: str, key: str, value: str) -> str:
