@@ -123,6 +123,7 @@ class UsageBarApp(rumps.App):
                 ClaudeCodeProvider(
                     budget_tokens=config.claude_code.budget_tokens(),
                     weekly_budget_tokens=config.claude_code.weekly_budget_tokens(),
+                    plan_display=config.claude_code.plan_display(),
                 )
             )
         if config.codex_cli.enabled:
@@ -332,6 +333,7 @@ class UsageBarApp(rumps.App):
             self.providers[0] = ClaudeCodeProvider(
                 budget_tokens=self.config.claude_code.budget_tokens(),
                 weekly_budget_tokens=self.config.claude_code.weekly_budget_tokens(),
+                plan_display=self.config.claude_code.plan_display(),
             )
         self.refresh()
 
@@ -452,7 +454,8 @@ class UsageBarApp(rumps.App):
         extras: list[str] = []
         if snap.plan_type:
             extras.append(f"plan: {snap.plan_type}")
-        if snap.cost_usd is not None and snap.cost_usd > 0:
+        elif snap.cost_usd is not None and snap.cost_usd > 0:
+            # Fall back to cost only when we don't have a plan label.
             extras.append(f"cost: ${snap.cost_usd:.2f}")
         if snap.tokens_used:
             if snap.budget_tokens:

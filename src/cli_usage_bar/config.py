@@ -39,6 +39,20 @@ class ClaudeCodeConfig:
     # percentage first crosses the threshold; re-arms at the next reset.
     alert_primary_percent: int = 0
     alert_secondary_percent: int = 0
+    # Human-readable plan name shown in the menu ("Max (5x)", "Pro", ...).
+    # Empty → derived from ``plan`` below. Useful after Calibrate which
+    # switches ``plan`` to "custom" but leaves the subscription unchanged.
+    plan_label: str = ""
+
+    def plan_display(self) -> str:
+        if self.plan_label:
+            return self.plan_label
+        return {
+            "pro": "Pro",
+            "max5": "Max (5x)",
+            "max20": "Max (20x)",
+            "custom": "Custom",
+        }.get(self.plan, self.plan)
 
     def budget_tokens(self) -> int:
         if self.plan == "custom" and self.custom_budget_tokens > 0:
@@ -93,6 +107,7 @@ title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
 alert_primary_percent = 0        # notify when 5h % crosses this (0 = off)
 alert_secondary_percent = 0      # notify when weekly % crosses this (0 = off)
+plan_label = ""                  # e.g. "Max (5x)" — shown in menu; "" = auto
 
 [codex_cli]
 enabled = true

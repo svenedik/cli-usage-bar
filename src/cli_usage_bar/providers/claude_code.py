@@ -39,6 +39,7 @@ class ClaudeCodeProvider(Provider):
         projects_dir: Path = DEFAULT_PROJECTS_DIR,
         budget_tokens: int = 7_500_000,
         weekly_budget_tokens: int | None = None,
+        plan_display: str | None = None,
         now_fn=lambda: datetime.now(tz=UTC),
         lookback_hours: int = 24 * 7,
     ) -> None:
@@ -47,6 +48,7 @@ class ClaudeCodeProvider(Provider):
         self.weekly_budget_tokens = (
             weekly_budget_tokens if weekly_budget_tokens is not None else budget_tokens * 150
         )
+        self.plan_display = plan_display
         self._now = now_fn
         self.lookback_hours = lookback_hours
 
@@ -85,7 +87,7 @@ class ClaudeCodeProvider(Provider):
             provider=self.name,
             primary=primary,
             secondary=secondary,
-            plan_type=None,
+            plan_type=self.plan_display,
             tokens_used=current_block["tokens"] if current_block else 0,
             budget_tokens=self.budget_tokens,
             weekly_budget_tokens=self.weekly_budget_tokens,

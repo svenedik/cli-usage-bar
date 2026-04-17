@@ -151,6 +151,7 @@ title_show_secondary = false       # show weekly percent
 title_show_reset = false           # append remaining time, e.g. "51% (2h30m)"
 alert_primary_percent = 0          # notify when 5h crosses this (0 = off)
 alert_secondary_percent = 0        # notify when weekly crosses this (0 = off)
+plan_label = ""                    # e.g. "Max (5x)"; "" auto-derives from plan
 
 [codex_cli]
 enabled = true                     # false → hide Codex CLI entirely
