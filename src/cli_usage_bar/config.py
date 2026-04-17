@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".config" / "cli-usage-bar" / "config.toml"
+logger = logging.getLogger("cli_usage_bar.config")
 
 # Empirical 5-hour token budgets derived from observed dashboard percentages.
 # Anthropic does not publish these numbers; these are starting estimates that
@@ -28,8 +30,9 @@ class ClaudeCodeConfig:
     plan: str = "max5"
     custom_budget_tokens: int = 0
     # Weekly budget multiplier relative to the 5-hour block budget. The
-    # empirical Max (5x) ratio — ~72M tokens used / 7d ≈ 6% dashboard — points
-    # to ~1.2B weekly vs ~7.5M per 5h block, i.e. a ~150x multiplier.
+    # empirical Max (5x) ratio of roughly 72M tokens over 7 days showing
+    # about 6% usage suggests a weekly pool near 1.2B tokens, or about 150x
+    # the 5-hour block budget.
     weekly_budget_multiplier: float = 150.0
     title_label: str = "C"
     title_show_primary: bool = True
@@ -40,9 +43,14 @@ class ClaudeCodeConfig:
     alert_primary_percent: int = 0
     alert_secondary_percent: int = 0
     # Human-readable plan name shown in the menu ("Max (5x)", "Pro", ...).
-    # Empty → derived from ``plan`` below. Useful after Calibrate which
-    # switches ``plan`` to "custom" but leaves the subscription unchanged.
+    # Empty means "derive it from plan". This is useful after Calibrate,
+    # which switches ``plan`` to "custom" but does not change the subscription.
     plan_label: str = ""
+    # Usage source. "local" parses ~/.claude/projects JSONL offline.
+    # "api" calls Anthropic's OAuth usage endpoint for dashboard-accurate
+    # percentages and needs the Claude Code OAuth token from the macOS keychain.
+    source: str = "local"
+    api_cache_seconds: int = 60
 
     def plan_display(self) -> str:
         if self.plan_label:
@@ -86,37 +94,39 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         return Config()
     with path.open("rb") as f:
         raw = tomllib.load(f)
-    general = GeneralConfig(**raw.get("general", {}))
-    claude = ClaudeCodeConfig(**raw.get("claude_code", {}))
-    codex = CodexCliConfig(**raw.get("codex_cli", {}))
+    general = _load_section(GeneralConfig, raw.get("general"), "general")
+    claude = _load_section(ClaudeCodeConfig, raw.get("claude_code"), "claude_code")
+    codex = _load_section(CodexCliConfig, raw.get("codex_cli"), "codex_cli")
     return Config(general=general, claude_code=claude, codex_cli=codex)
 
 
 DEFAULT_CONFIG_TEXT = """[general]
 refresh_interval_sec = 60
-show_title_percent = true
+show_title_percent = true          # master switch for menu bar percentages
 
 [claude_code]
 enabled = true
 plan = "max5"                    # pro | max5 | max20 | custom
-custom_budget_tokens = 0         # used only when plan = "custom"
-weekly_budget_multiplier = 150.0 # weekly pool size relative to the 5h block
+custom_budget_tokens = 0         # only used when plan = "custom"
+weekly_budget_multiplier = 150.0 # weekly pool size relative to the 5-hour block
 title_label = "C"                # prefix shown in the menu bar title
-title_show_primary = true        # include the 5h percent in the title
+title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-alert_primary_percent = 0        # notify when 5h % crosses this (0 = off)
-alert_secondary_percent = 0      # notify when weekly % crosses this (0 = off)
-plan_label = ""                  # e.g. "Max (5x)" — shown in menu; "" = auto
+alert_primary_percent = 0        # notify when 5-hour usage reaches this percent
+alert_secondary_percent = 0      # notify when weekly usage reaches this percent
+plan_label = ""                  # optional label, e.g. "Max (5x)"; empty = auto
+source = "local"                 # "local" (offline JSONL) | "api" (OAuth usage endpoint)
+api_cache_seconds = 60           # cache for "api" mode (seconds)
 
 [codex_cli]
 enabled = true
 title_label = "X"                # prefix shown in the menu bar title
-title_show_primary = true        # include the 5h percent in the title
+title_show_primary = true        # include the 5-hour percent in the title
 title_show_secondary = false     # include the weekly percent in the title
 title_show_reset = false         # append remaining time next to each percent
-alert_primary_percent = 0        # notify when 5h % crosses this (0 = off)
-alert_secondary_percent = 0      # notify when weekly % crosses this (0 = off)
+alert_primary_percent = 0        # notify when 5-hour usage reaches this percent
+alert_secondary_percent = 0      # notify when weekly usage reaches this percent
 """
 
 
@@ -149,6 +159,27 @@ def calibrate_from_dashboard(
     raw = _set_toml_value(raw, "claude_code", "custom_budget_tokens", str(budget))
     path.write_text(raw, encoding="utf-8")
     return budget
+
+
+def _load_section[T](section_type: type[T], raw_value: object, section_name: str) -> T:
+    if raw_value is None:
+        raw: dict[str, object] = {}
+    elif isinstance(raw_value, dict):
+        raw = raw_value
+    else:
+        logger.warning("ignoring invalid config section [%s]: expected a TOML table", section_name)
+        raw = {}
+
+    allowed = {f.name for f in fields(section_type)}
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        logger.warning(
+            "ignoring unknown config keys in [%s]: %s",
+            section_name,
+            ", ".join(unknown),
+        )
+    filtered = {key: value for key, value in raw.items() if key in allowed}
+    return section_type(**filtered)
 
 
 def _set_toml_value(text: str, section: str, key: str, value: str) -> str:

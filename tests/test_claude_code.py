@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shutil
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from cli_usage_bar.providers.claude_code import ClaudeCodeProvider
@@ -67,3 +67,18 @@ def test_stale_block_is_excluded(tmp_path):
     assert snap.primary is None
     assert snap.secondary is not None
     assert snap.tokens_used == 0
+
+
+def test_weekly_reset_anchors_to_now(tmp_path):
+    """Local mode has no true window start — the 7d reset is monotonic w.r.t. now."""
+    projects = _layout(tmp_path)
+    now = datetime(2026, 4, 17, 8, 30, tzinfo=UTC)
+    later = now + timedelta(minutes=1)
+
+    first = ClaudeCodeProvider(projects_dir=projects, now_fn=lambda: now).snapshot()
+    second = ClaudeCodeProvider(projects_dir=projects, now_fn=lambda: later).snapshot()
+
+    assert first.secondary is not None
+    assert second.secondary is not None
+    assert first.secondary.resets_at == now + timedelta(days=7)
+    assert second.secondary.resets_at == later + timedelta(days=7)

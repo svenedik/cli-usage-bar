@@ -72,15 +72,14 @@ class ClaudeCodeProvider(Provider):
         messages.sort(key=lambda m: m["timestamp"])
 
         current_block = _current_block(messages, now=now)
-        weekly_tokens, weekly_cost = _aggregate(
-            [m for m in messages if m["timestamp"] >= now - WEEK_DURATION]
-        )
+        weekly_messages = [m for m in messages if m["timestamp"] >= now - WEEK_DURATION]
+        weekly_tokens = sum(m["tokens"] for m in weekly_messages)
 
         primary = _block_to_rate_limit(current_block, now=now, budget=self.budget_tokens)
-        secondary = RateLimit(
-            used_percent=min(100.0, 100.0 * weekly_tokens / max(1, self.weekly_budget_tokens)),
-            window_minutes=int(WEEK_DURATION.total_seconds() // 60),
-            resets_at=now + WEEK_DURATION,
+        secondary = _weekly_rate_limit(
+            weekly_tokens=weekly_tokens,
+            budget=self.weekly_budget_tokens,
+            now=now,
         )
 
         return UsageSnapshot(
@@ -220,4 +219,16 @@ def _block_to_rate_limit(block: dict | None, now: datetime, budget: int) -> Rate
         used_percent=round(pct, 2),
         window_minutes=int(BLOCK_DURATION.total_seconds() // 60),
         resets_at=block["end"],
+    )
+
+
+def _weekly_rate_limit(weekly_tokens: int, budget: int, now: datetime) -> RateLimit:
+    # Local mode has no real "window start" — the 7d figure is a rolling
+    # sum. Anchor resets_at to now+7d so it is monotonic; it's labelled "in
+    # ~7d" in the UI. The API source (when enabled) provides the real value.
+    pct = min(100.0, 100.0 * weekly_tokens / max(1, budget))
+    return RateLimit(
+        used_percent=round(pct, 2),
+        window_minutes=int(WEEK_DURATION.total_seconds() // 60),
+        resets_at=now + WEEK_DURATION,
     )

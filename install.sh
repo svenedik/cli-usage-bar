@@ -56,8 +56,10 @@ if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
   warn '    export PATH="$HOME/.local/bin:$PATH"'
 fi
 
-info "Launching now in the background…"
-(cd "$INSTALL_DIR" && nohup .venv/bin/python -m cli_usage_bar >/tmp/cli-usage-bar.log 2>&1 &)
+if [[ "${NO_LAUNCH_AGENT:-0}" == "1" || ! -f "$PLIST_SRC" ]]; then
+  info "Launching now in the background..."
+  (cd "$INSTALL_DIR" && nohup .venv/bin/python -m cli_usage_bar >/tmp/cli-usage-bar.log 2>&1 &)
+fi
 
 cat <<DONE
 

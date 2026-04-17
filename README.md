@@ -45,7 +45,10 @@
   logs onto your clipboard in one click — ideal for filing GitHub issues.
 - **Calibrate Claude Code** against the real dashboard percent to correct
   plan-budget estimates.
-- Everything lives on disk — no login, no tokens, no network requests.
+- **Two Claude Code modes**: offline (default, JSONL-based) or
+  dashboard-accurate (`source = "api"`, reuses Claude Code's own OAuth token
+  from the macOS keychain — no extra login).
+- Codex CLI is always fully offline (rate limits are inline in the rollout).
 
 ## Install (one-liner)
 
@@ -88,43 +91,61 @@ title/label changes) or run `usage-bar restart` (also picks up `enabled`,
 
 ## How it works
 
-Instead of calling a web API, cli-usage-bar reads the transcript files the CLIs
-already write to disk:
+By default, cli-usage-bar reads the transcript files the CLIs already write to
+disk — no network calls, no login, no cookies:
 
-- **Claude Code** — `~/.claude/projects/<slug>/<session-id>.jsonl`. Token
-  counts from every assistant message are aggregated into rolling 5-hour
-  "blocks" (ccusage-style).
+- **Claude Code** (default `source = "local"`) —
+  `~/.claude/projects/<slug>/<session-id>.jsonl`. Token counts from every
+  assistant message are aggregated into rolling 5-hour "blocks"
+  (ccusage-style) and divided by a plan budget estimate. Because Anthropic
+  doesn't publish exact budgets, this can drift a few percent from the
+  dashboard (see **Calibrate** below).
+- **Claude Code** (optional `source = "api"`) — reuses the OAuth token that
+  Claude Code already stored in the macOS keychain and calls Anthropic's
+  internal usage endpoint, the same one the dashboard uses. Percentages are
+  byte-identical to `claude.ai → Settings → Usage`, no calibration needed.
+  You never paste a token; you just need to be logged into Claude Code.
 - **Codex CLI** — `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. Every
   `token_count` event already contains inline `rate_limits.primary` (5-hour)
   and `rate_limits.secondary` (weekly) percentages — we just render them.
+  Always offline.
 
 Benefits:
 
-- 100% offline. No cookie extraction, no API authentication.
+- Default mode is 100% offline. No cookie extraction, no API key management.
+- Optional API mode uses your existing login — still no manual auth step.
 - Works whether you use Claude Code / Codex CLI via Pro, Max, Plus, etc.
 - Trivial data schema — trivial to extend with a new provider.
 
 ## FAQ
 
 **Do I need an API key or token?**
-No. The app reads files the CLIs already write on your machine. It never talks
-to any server, never reads cookies, never asks for a password. If a file
-doesn't exist (you haven't used Claude Code or Codex), the corresponding
-section just shows "not configured".
+No. In the default `source = "local"` mode the app never talks to any server,
+never reads cookies, never asks for a password. In the optional
+`source = "api"` mode it reuses the OAuth token that Claude Code already
+stored in your macOS keychain (under `Claude Code-credentials`) — you don't
+paste anything, you just need to be logged into Claude Code.
 
 **Does it send my data anywhere?**
-No. It only reads:
+In default mode it only reads local files:
 
 - `~/.claude/projects/**/*.jsonl` (Claude Code transcripts)
 - `~/.codex/sessions/**/rollout-*.jsonl` (Codex CLI rollouts)
 - `~/.config/cli-usage-bar/config.toml` (your settings)
 
 and writes to `~/.config/cli-usage-bar/config.toml` (only when you click
-Calibrate) and `/tmp/cli-usage-bar.log` (app logs). No network requests.
+Calibrate) and `/tmp/cli-usage-bar.log` (app logs). **No network requests in
+this mode.**
+
+In optional `source = "api"` mode it additionally makes an HTTPS GET to
+`api.anthropic.com/api/oauth/usage` every `api_cache_seconds` (default 60s),
+authenticated with your existing Claude Code OAuth token. Nothing else is
+sent; no other endpoint is called.
 
 **Do I need to sign into Claude or ChatGPT in this app?**
 No. You're already signed in inside Claude Code / Codex CLI; that's all it
-needs. This app is just a reader of their on-disk state.
+needs. This app is just a reader of their on-disk state (and, in API mode,
+their existing OAuth session).
 
 **What if I only use one of the two?**
 Set the other provider's `enabled = false` in the config and
@@ -133,34 +154,36 @@ Set the other provider's `enabled = false` in the config and
 ## Configuration
 
 First run creates `~/.config/cli-usage-bar/config.toml`. All fields are
-optional; defaults are documented inline.
+optional; the generated defaults are shown below.
 
 ```toml
 [general]
 refresh_interval_sec = 60
-show_title_percent = true          # master switch for the menu bar title
+show_title_percent = true          # master switch for menu bar percentages
 
 [claude_code]
-enabled = true                     # false → hide Claude Code entirely
-plan = "max5"                      # "pro" | "max5" | "max20" | "custom"
-custom_budget_tokens = 0           # only when plan = "custom"
-weekly_budget_multiplier = 150.0   # weekly pool relative to 5h block
-title_label = "Claude"             # prefix in the menu bar title
-title_show_primary = true          # show 5h percent
-title_show_secondary = false       # show weekly percent
-title_show_reset = false           # append remaining time, e.g. "51% (2h30m)"
-alert_primary_percent = 0          # notify when 5h crosses this (0 = off)
-alert_secondary_percent = 0        # notify when weekly crosses this (0 = off)
-plan_label = ""                    # e.g. "Max (5x)"; "" auto-derives from plan
+enabled = true
+plan = "max5"                    # pro | max5 | max20 | custom
+custom_budget_tokens = 0         # only used when plan = "custom"
+weekly_budget_multiplier = 150.0 # weekly pool size relative to the 5-hour block
+title_label = "C"                # prefix shown in the menu bar title
+title_show_primary = true        # include the 5-hour percent in the title
+title_show_secondary = false     # include the weekly percent in the title
+title_show_reset = false         # append remaining time next to each percent
+alert_primary_percent = 0        # notify when 5-hour usage reaches this percent
+alert_secondary_percent = 0      # notify when weekly usage reaches this percent
+plan_label = ""                  # optional label, e.g. "Max (5x)"; empty = auto
+source = "local"                 # "local" (offline JSONL) | "api" (OAuth usage endpoint)
+api_cache_seconds = 60           # cache for "api" mode (seconds)
 
 [codex_cli]
-enabled = true                     # false → hide Codex CLI entirely
-title_label = "Codex"
-title_show_primary = true
-title_show_secondary = false
-title_show_reset = false
-alert_primary_percent = 0
-alert_secondary_percent = 0
+enabled = true
+title_label = "X"                # prefix shown in the menu bar title
+title_show_primary = true        # include the 5-hour percent in the title
+title_show_secondary = false     # include the weekly percent in the title
+title_show_reset = false         # append remaining time next to each percent
+alert_primary_percent = 0        # notify when 5-hour usage reaches this percent
+alert_secondary_percent = 0      # notify when weekly usage reaches this percent
 ```
 
 ### Alerts
@@ -183,15 +206,54 @@ so you won't get spammed. Weekly thresholds work the same way via
 Set the other provider's `enabled = false`, then `usage-bar restart`. Title
 becomes just `Claude 51%` or `Codex 31%` with no separator.
 
-### Calibrating the Claude Code percent
+### Dashboard-accurate mode (`source = "api"`)
 
-Anthropic doesn't publish 5-hour block budgets, so defaults are estimates. If
-your menu bar `5h %` disagrees with the Claude.ai dashboard:
+In the default `"local"` mode the 5-hour percent is estimated from local
+JSONL token counts, which can drift a few percent from the dashboard.
+
+If you want the exact same number Claude.ai shows, set:
+
+```toml
+[claude_code]
+source = "api"
+api_cache_seconds = 60
+```
+
+and `usage-bar restart`. The app will:
+
+1. Read your existing Claude Code OAuth token from the macOS keychain
+   (`security find-generic-password -s "Claude Code-credentials"`).
+2. Call Anthropic's usage endpoint every `api_cache_seconds`
+   (default 60s, cached between calls to stay well under any rate limit).
+3. Render the returned 5-hour and 7-day `utilization` directly.
+
+Requirements:
+
+- You've signed into Claude Code at least once on this Mac (the token is
+  what `claude` itself uses).
+- Network access to `api.anthropic.com`.
+
+Notes:
+
+- No manual token pasting. Calibration is disabled in this mode (percentages
+  come from the source of truth).
+- The endpoint is the same internal one the dashboard uses and isn't part
+  of Anthropic's public API contract, so in theory it could change. If it
+  ever does, flip back to `source = "local"`.
+
+### Calibrating the Claude Code percent (local mode only)
+
+Anthropic doesn't publish 5-hour block budgets, so `source = "local"`
+defaults are estimates. If your menu bar `5h %` disagrees with the
+Claude.ai dashboard and you'd rather stay offline:
 
 1. Click **Calibrate Claude Code…** in the menu
 2. Enter the percent shown in Claude.ai → Settings → Usage
 3. The app solves for your real budget and writes `plan = "custom"` +
    `custom_budget_tokens` back to the config
+
+(If you're already in `source = "api"` mode the menu shows "Calibration not
+needed" — the API returns exact percentages.)
 
 Codex CLI doesn't need calibration — percentages are inline in the rollout.
 
@@ -228,6 +290,16 @@ ln -sf "$PWD/bin/usage-bar" ~/.local/bin/usage-bar
 - **`Codex CLI: no rollout files found`** — you haven't run `codex` yet.
 - **Percentage looks wrong for Claude Code** — use **Calibrate Claude Code…**
   or edit `plan` / `custom_budget_tokens` in the config and `usage-bar restart`.
+  For byte-exact values switch to `source = "api"` (see above).
+- **`api: no usage data (missing token or network)`** — you're in
+  `source = "api"` mode but the keychain entry `Claude Code-credentials`
+  isn't present (sign into Claude Code once) or `api.anthropic.com` is
+  unreachable. You can always fall back to `source = "local"`.
+- **`api: auth failed (re-login to Claude Code)`** — the keychain token
+  has expired or been revoked. Sign into Claude Code again (it refreshes
+  the same keychain entry) and the menu will recover on the next refresh.
+- **`api: rate limited (try again shortly)`** — upstream `429`. Increase
+  `api_cache_seconds` if you see this often.
 
 ## Development
 

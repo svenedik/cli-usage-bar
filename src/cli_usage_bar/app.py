@@ -5,10 +5,12 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
 import rumps
+from PyObjCTools import AppHelper
 
 from cli_usage_bar import __version__
 from cli_usage_bar.config import (
@@ -19,7 +21,12 @@ from cli_usage_bar.config import (
     load_config,
 )
 from cli_usage_bar.models import RateLimit, UsageSnapshot
-from cli_usage_bar.providers import ClaudeCodeProvider, CodexCliProvider, Provider
+from cli_usage_bar.providers import (
+    ClaudeCodeApiProvider,
+    ClaudeCodeProvider,
+    CodexCliProvider,
+    Provider,
+)
 from cli_usage_bar.watcher import DebouncedWatcher
 
 logger = logging.getLogger("cli_usage_bar")
@@ -119,18 +126,14 @@ class UsageBarApp(rumps.App):
         self.config = config
         self.providers: list[Provider] = []
         if config.claude_code.enabled:
-            self.providers.append(
-                ClaudeCodeProvider(
-                    budget_tokens=config.claude_code.budget_tokens(),
-                    weekly_budget_tokens=config.claude_code.weekly_budget_tokens(),
-                    plan_display=config.claude_code.plan_display(),
-                )
-            )
+            self.providers.append(_make_claude_provider(config))
         if config.codex_cli.enabled:
             self.providers.append(CodexCliProvider())
 
         # (provider_name, kind) -> (last_block_resets_at, already_fired)
         self._alert_state: dict[tuple[str, str], tuple[datetime | None, bool]] = {}
+        self._refresh_lock = threading.Lock()
+        self._refresh_pending = False
 
         self._build_menu()
         self.timer = rumps.Timer(self._on_tick, config.general.refresh_interval_sec)
@@ -204,10 +207,23 @@ class UsageBarApp(rumps.App):
         self.refresh()
 
     def _refresh_threadsafe(self) -> None:
+        with self._refresh_lock:
+            if self._refresh_pending:
+                return
+            self._refresh_pending = True
         try:
-            rumps.Timer(lambda _s: self.refresh(), 0.1).start()
+            AppHelper.callAfter(self._refresh_from_watcher)
         except Exception:  # pragma: no cover
+            with self._refresh_lock:
+                self._refresh_pending = False
             logger.exception("refresh from watcher failed")
+
+    def _refresh_from_watcher(self) -> None:
+        try:
+            self.refresh()
+        finally:
+            with self._refresh_lock:
+                self._refresh_pending = False
 
     def _on_open_config(self, _sender) -> None:
         path = ensure_default_config()
@@ -292,6 +308,17 @@ class UsageBarApp(rumps.App):
         return "\n".join(parts)
 
     def _on_calibrate(self, _sender) -> None:
+        if self.config.claude_code.source == "api":
+            rumps.alert(
+                title="Calibration not needed",
+                message=(
+                    "Claude Code is using the OAuth API source, which returns\n"
+                    "dashboard-accurate percentages directly. Calibration only\n"
+                    'applies to source = "local".'
+                ),
+                ok="Close",
+            )
+            return
         snap = self._latest_claude_snapshot()
         tokens = snap.tokens_used if snap and snap.tokens_used else 0
         if tokens <= 0:
@@ -330,11 +357,7 @@ class UsageBarApp(rumps.App):
         )
         self.config = load_config()
         if self.providers and self.providers[0].name == "claude_code":
-            self.providers[0] = ClaudeCodeProvider(
-                budget_tokens=self.config.claude_code.budget_tokens(),
-                weekly_budget_tokens=self.config.claude_code.weekly_budget_tokens(),
-                plan_display=self.config.claude_code.plan_display(),
-            )
+            self.providers[0] = _make_claude_provider(self.config)
         self.refresh()
 
     def _latest_claude_snapshot(self) -> UsageSnapshot | None:
@@ -468,6 +491,19 @@ class UsageBarApp(rumps.App):
             else:
                 extras.append(f"tokens: {snap.tokens_used:,}")
         extra.title = "   " + ("  ·  ".join(extras) if extras else " ")
+
+
+def _make_claude_provider(config: Config) -> Provider:
+    if config.claude_code.source == "api":
+        return ClaudeCodeApiProvider(
+            plan_display=config.claude_code.plan_display(),
+            cache_seconds=config.claude_code.api_cache_seconds,
+        )
+    return ClaudeCodeProvider(
+        budget_tokens=config.claude_code.budget_tokens(),
+        weekly_budget_tokens=config.claude_code.weekly_budget_tokens(),
+        plan_display=config.claude_code.plan_display(),
+    )
 
 
 def _fmt_tokens(n: int) -> str:
