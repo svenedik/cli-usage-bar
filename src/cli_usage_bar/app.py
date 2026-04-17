@@ -10,6 +10,7 @@ from cli_usage_bar import __version__
 from cli_usage_bar.config import (
     CONFIG_PATH,
     Config,
+    calibrate_from_dashboard,
     ensure_default_config,
     load_config,
 )
@@ -49,7 +50,10 @@ class UsageBarApp(rumps.App):
         self.providers: list[Provider] = []
         if config.claude_code.enabled:
             self.providers.append(
-                ClaudeCodeProvider(budget_tokens=config.claude_code.budget_tokens())
+                ClaudeCodeProvider(
+                    budget_tokens=config.claude_code.budget_tokens(),
+                    weekly_budget_tokens=config.claude_code.weekly_budget_tokens(),
+                )
             )
         if config.codex_cli.enabled:
             self.providers.append(CodexCliProvider())
@@ -82,6 +86,9 @@ class UsageBarApp(rumps.App):
             self.status_items[p.name] = [label, five_h, weekly, extra]
 
         self.menu.add(rumps.MenuItem("Refresh now", callback=self._on_refresh_clicked))
+        self.menu.add(
+            rumps.MenuItem("Calibrate Claude Code…", callback=self._on_calibrate)
+        )
         self.menu.add(rumps.MenuItem("Open config", callback=self._on_open_config))
         self.menu.add(None)
         self.menu.add(rumps.MenuItem(f"About v{__version__}", callback=self._on_about))
@@ -110,6 +117,66 @@ class UsageBarApp(rumps.App):
     def _on_open_config(self, _sender) -> None:
         path = ensure_default_config()
         subprocess.run(["open", str(path)], check=False)
+
+    def _on_calibrate(self, _sender) -> None:
+        """Re-derive Claude Code budget from the current dashboard reading.
+
+        Claude.ai → Settings → Usage → "Current session: NN% used".
+        Enter that number here; we divide the tokens currently tracked in the
+        active 5h block by the percent to obtain a real budget.
+        """
+        snap = self._latest_claude_snapshot()
+        tokens = snap.tokens_used if snap and snap.tokens_used else 0
+        if tokens <= 0:
+            rumps.alert(
+                title="No active block",
+                message="Start or continue a Claude Code session first, then retry.",
+                ok="Close",
+            )
+            return
+        resp = rumps.Window(
+            title="Calibrate Claude Code",
+            message=(
+                f"Active block tokens: {tokens:,}\n\n"
+                "Open Claude.ai → Settings → Usage and copy the current\n"
+                "session percentage (e.g. 51). Enter just the number below."
+            ),
+            default_text="",
+            ok="Calibrate",
+            cancel="Cancel",
+            dimensions=(120, 24),
+        ).run()
+        if not resp.clicked:
+            return
+        try:
+            pct = float(resp.text.strip().rstrip("%"))
+        except ValueError:
+            rumps.alert(title="Invalid input", message="Please enter a number like 51.")
+            return
+        if pct <= 0 or pct > 100:
+            rumps.alert(title="Out of range", message="Percent must be between 0 and 100.")
+            return
+        budget = calibrate_from_dashboard(tokens_used=tokens, dashboard_percent=pct)
+        rumps.alert(
+            title="Calibrated",
+            message=f"New Claude Code 5h budget: {budget:,} tokens.\nRefreshing…",
+        )
+        self.config = load_config()
+        if self.providers and self.providers[0].name == "claude_code":
+            self.providers[0] = ClaudeCodeProvider(
+                budget_tokens=self.config.claude_code.budget_tokens(),
+                weekly_budget_tokens=self.config.claude_code.weekly_budget_tokens(),
+            )
+        self.refresh()
+
+    def _latest_claude_snapshot(self) -> UsageSnapshot | None:
+        for p in self.providers:
+            if p.name == "claude_code":
+                try:
+                    return p.snapshot()
+                except Exception:
+                    return None
+        return None
 
     def _on_about(self, _sender) -> None:
         rumps.alert(

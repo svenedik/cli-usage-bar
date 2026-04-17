@@ -37,12 +37,16 @@ class ClaudeCodeProvider(Provider):
     def __init__(
         self,
         projects_dir: Path = DEFAULT_PROJECTS_DIR,
-        budget_tokens: int = 220_000_000,
+        budget_tokens: int = 7_500_000,
+        weekly_budget_tokens: int | None = None,
         now_fn=lambda: datetime.now(tz=UTC),
-        lookback_hours: int = 24,
+        lookback_hours: int = 24 * 7,
     ) -> None:
         self.projects_dir = projects_dir
         self.budget_tokens = budget_tokens
+        self.weekly_budget_tokens = (
+            weekly_budget_tokens if weekly_budget_tokens is not None else budget_tokens * 150
+        )
         self._now = now_fn
         self.lookback_hours = lookback_hours
 
@@ -72,7 +76,7 @@ class ClaudeCodeProvider(Provider):
 
         primary = _block_to_rate_limit(current_block, now=now, budget=self.budget_tokens)
         secondary = RateLimit(
-            used_percent=min(100.0, 100.0 * weekly_tokens / max(1, self.budget_tokens * 7)),
+            used_percent=min(100.0, 100.0 * weekly_tokens / max(1, self.weekly_budget_tokens)),
             window_minutes=int(WEEK_DURATION.total_seconds() // 60),
             resets_at=now + WEEK_DURATION,
         )

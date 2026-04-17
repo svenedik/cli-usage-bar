@@ -43,7 +43,8 @@ def test_missing_directory_returns_error(tmp_path):
 def test_no_rollouts_returns_error(tmp_path):
     (tmp_path / "sessions").mkdir()
     snap = CodexCliProvider(sessions_dir=tmp_path / "sessions").snapshot()
-    assert snap.error == "no rollout files found"
+    assert snap.error is not None
+    assert "no rollouts" in snap.error
 
 
 def test_picks_most_recent_file(tmp_path):
@@ -63,3 +64,32 @@ def test_picks_most_recent_file(tmp_path):
     snap = CodexCliProvider(sessions_dir=tmp_path / "sessions").snapshot()
     assert snap.primary.used_percent == 99.0
     assert snap.plan_type == "pro"
+
+
+def test_timestamp_wins_over_mtime(tmp_path):
+    """Newer file by mtime should lose if its token_count events are older."""
+    sessions = tmp_path / "sessions" / "2026" / "04" / "17"
+    sessions.mkdir(parents=True)
+
+    # File A: written *later* (bigger mtime) but its last token_count is earlier
+    a = sessions / "rollout-A.jsonl"
+    a.write_text(
+        '{"timestamp":"2026-04-17T05:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":1}},"rate_limits":{"primary":{"used_percent":10.0,"window_minutes":300,"resets_at":1776379999},"secondary":{"used_percent":5.0,"window_minutes":10080,"resets_at":1776762999},"plan_type":"plus"}}}\n'
+    )
+
+    # File B: written earlier, but contains a *later* token_count event
+    b = sessions / "rollout-B.jsonl"
+    b.write_text(
+        '{"timestamp":"2026-04-17T09:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":1}},"rate_limits":{"primary":{"used_percent":77.0,"window_minutes":300,"resets_at":1776379999},"secondary":{"used_percent":44.0,"window_minutes":10080,"resets_at":1776762999},"plan_type":"plus"}}}\n'
+    )
+
+    import os
+    now_ts = 1800000000
+    os.utime(b, (now_ts - 3600, now_ts - 3600))
+    os.utime(a, (now_ts, now_ts))
+
+    from datetime import timedelta
+    p = CodexCliProvider(sessions_dir=tmp_path / "sessions", lookback=timedelta(days=3650))
+    snap = p.snapshot()
+    # B's event (09:00) is newer than A's (05:00) → 77% wins
+    assert snap.primary.used_percent == 77.0

@@ -6,10 +6,13 @@ from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".config" / "cli-usage-bar" / "config.toml"
 
+# Empirical 5-hour token budgets derived from observed dashboard percentages.
+# Anthropic does not publish these numbers; these are starting estimates that
+# the user can override with the "calibrate" flow (see README).
 PLAN_BUDGETS: dict[str, int] = {
-    "pro": 19_000_000,
-    "max5": 88_000_000,
-    "max20": 220_000_000,
+    "pro": 1_500_000,
+    "max5": 7_500_000,
+    "max20": 30_000_000,
 }
 
 
@@ -22,13 +25,20 @@ class GeneralConfig:
 @dataclass
 class ClaudeCodeConfig:
     enabled: bool = True
-    plan: str = "max20"
+    plan: str = "max5"
     custom_budget_tokens: int = 0
+    # Weekly budget multiplier relative to the 5-hour block budget. The
+    # empirical Max (5x) ratio — ~72M tokens used / 7d ≈ 6% dashboard — points
+    # to ~1.2B weekly vs ~7.5M per 5h block, i.e. a ~150x multiplier.
+    weekly_budget_multiplier: float = 150.0
 
     def budget_tokens(self) -> int:
         if self.plan == "custom" and self.custom_budget_tokens > 0:
             return self.custom_budget_tokens
-        return PLAN_BUDGETS.get(self.plan, PLAN_BUDGETS["max20"])
+        return PLAN_BUDGETS.get(self.plan, PLAN_BUDGETS["max5"])
+
+    def weekly_budget_tokens(self) -> int:
+        return int(self.budget_tokens() * self.weekly_budget_multiplier)
 
 
 @dataclass
@@ -54,23 +64,77 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
     return Config(general=general, claude_code=claude, codex_cli=codex)
 
 
-def ensure_default_config(path: Path = CONFIG_PATH) -> Path:
-    if path.exists():
-        return path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        """[general]
+DEFAULT_CONFIG_TEXT = """[general]
 refresh_interval_sec = 60
 show_title_percent = true
 
 [claude_code]
 enabled = true
-plan = "max20"            # pro | max5 | max20 | custom
-custom_budget_tokens = 0  # only used when plan = "custom"
+plan = "max5"                    # pro | max5 | max20 | custom
+custom_budget_tokens = 0         # used only when plan = "custom"
+weekly_budget_multiplier = 150.0 # weekly pool size relative to the 5h block
 
 [codex_cli]
 enabled = true
-""",
-        encoding="utf-8",
-    )
+"""
+
+
+def ensure_default_config(path: Path = CONFIG_PATH) -> Path:
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(DEFAULT_CONFIG_TEXT, encoding="utf-8")
     return path
+
+
+def calibrate_from_dashboard(
+    tokens_used: int,
+    dashboard_percent: float,
+    path: Path = CONFIG_PATH,
+) -> int:
+    """Derive a ``custom_budget_tokens`` value from an observed dashboard pair.
+
+    Writes ``plan = "custom"`` and the computed budget into the config file.
+    Returns the computed budget.
+    """
+    if dashboard_percent <= 0:
+        raise ValueError("dashboard_percent must be > 0")
+    budget = int(round(tokens_used / (dashboard_percent / 100.0)))
+
+    if not path.exists():
+        ensure_default_config(path)
+    raw = path.read_text(encoding="utf-8")
+    raw = _set_toml_value(raw, "claude_code", "plan", '"custom"')
+    raw = _set_toml_value(raw, "claude_code", "custom_budget_tokens", str(budget))
+    path.write_text(raw, encoding="utf-8")
+    return budget
+
+
+def _set_toml_value(text: str, section: str, key: str, value: str) -> str:
+    """Naive single-value TOML setter for known keys. Preserves surrounding lines."""
+    lines = text.splitlines(keepends=True)
+    in_section = False
+    written = False
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section and not written:
+                out.append(f"{key} = {value}\n")
+                written = True
+            in_section = stripped == f"[{section}]"
+        elif in_section and stripped.startswith(f"{key}") and "=" in stripped:
+            prefix = line[: len(line) - len(line.lstrip())]
+            # Preserve inline comment if present
+            comment = ""
+            if "#" in line:
+                comment = "  " + line[line.index("#") :].rstrip()
+            out.append(f"{prefix}{key} = {value}{comment}\n")
+            written = True
+            continue
+        out.append(line)
+    if in_section and not written:
+        if out and not out[-1].endswith("\n"):
+            out[-1] = out[-1] + "\n"
+        out.append(f"{key} = {value}\n")
+    return "".join(out)

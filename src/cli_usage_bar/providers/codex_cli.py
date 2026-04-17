@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from cli_usage_bar.models import RateLimit, UsageSnapshot
@@ -9,12 +9,21 @@ from cli_usage_bar.providers.base import Provider
 
 DEFAULT_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
 
+# Only scan rollout files modified within this window. Anything older almost
+# certainly carries stale rate-limit snapshots that would mislead the user.
+_DEFAULT_LOOKBACK = timedelta(hours=24)
+
 
 class CodexCliProvider(Provider):
     name = "codex_cli"
 
-    def __init__(self, sessions_dir: Path = DEFAULT_SESSIONS_DIR) -> None:
+    def __init__(
+        self,
+        sessions_dir: Path = DEFAULT_SESSIONS_DIR,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> None:
         self.sessions_dir = sessions_dir
+        self.lookback = lookback
 
     def watch_paths(self) -> list[str]:
         return [str(self.sessions_dir)] if self.sessions_dir.exists() else []
@@ -25,52 +34,83 @@ class CodexCliProvider(Provider):
                 provider=self.name,
                 error=f"directory not found: {self.sessions_dir}",
             )
-        latest_file = _latest_rollout(self.sessions_dir)
-        if latest_file is None:
-            return UsageSnapshot(provider=self.name, error="no rollout files found")
-        event = _find_last_token_count(latest_file)
-        if event is None:
+
+        cutoff = datetime.now(tz=UTC) - self.lookback
+        candidates = _recent_rollouts(self.sessions_dir, cutoff=cutoff)
+        if not candidates:
             return UsageSnapshot(
                 provider=self.name,
-                error="no token_count event in latest rollout",
-                last_activity=_file_mtime(latest_file),
+                error=f"no rollouts modified in last {int(self.lookback.total_seconds() // 3600)}h",
             )
-        return _build_snapshot(event, last_activity=_file_mtime(latest_file))
+
+        latest_event, latest_ts = _scan_latest_token_count(candidates)
+        if latest_event is None:
+            return UsageSnapshot(
+                provider=self.name,
+                error="no token_count event in recent rollouts",
+            )
+
+        return _build_snapshot(latest_event, last_activity=latest_ts)
 
 
-def _latest_rollout(sessions_dir: Path) -> Path | None:
-    rollouts = list(sessions_dir.rglob("rollout-*.jsonl"))
-    if not rollouts:
+def _recent_rollouts(sessions_dir: Path, cutoff: datetime) -> list[Path]:
+    rollouts: list[Path] = []
+    for p in sessions_dir.rglob("rollout-*.jsonl"):
+        try:
+            mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=UTC)
+        except OSError:
+            continue
+        if mtime >= cutoff:
+            rollouts.append(p)
+    return rollouts
+
+
+def _scan_latest_token_count(paths: list[Path]) -> tuple[dict | None, datetime | None]:
+    """Across ``paths``, find the token_count event with the newest timestamp.
+
+    We can't trust ``file.mtime`` alone — a rollout written later may contain a
+    token_count from earlier in its own timeline than another rollout's last
+    token_count. We parse all candidates and compare embedded event timestamps.
+    """
+    best_event: dict | None = None
+    best_ts: datetime | None = None
+
+    for path in paths:
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    if '"token_count"' not in line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    payload = obj.get("payload") or {}
+                    if payload.get("type") != "token_count":
+                        continue
+                    ts = _parse_iso(obj.get("timestamp"))
+                    if ts is None:
+                        continue
+                    if best_ts is None or ts > best_ts:
+                        best_ts = ts
+                        best_event = payload
+        except OSError:
+            continue
+
+    return best_event, best_ts
+
+
+def _parse_iso(ts_str: str | None) -> datetime | None:
+    if not ts_str:
         return None
-    return max(rollouts, key=lambda p: p.stat().st_mtime)
-
-
-def _file_mtime(p: Path) -> datetime:
-    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC)
-
-
-def _find_last_token_count(path: Path) -> dict | None:
-    """Return the payload of the most recent token_count event in the file."""
-    last: dict | None = None
     try:
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or '"token_count"' not in line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                payload = obj.get("payload") or {}
-                if payload.get("type") == "token_count":
-                    last = payload
-    except OSError:
+        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except ValueError:
         return None
-    return last
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
 
 
-def _build_snapshot(payload: dict, last_activity: datetime) -> UsageSnapshot:
+def _build_snapshot(payload: dict, last_activity: datetime | None) -> UsageSnapshot:
     rate = payload.get("rate_limits") or {}
     info = payload.get("info") or {}
     totals = info.get("total_token_usage") or {}
